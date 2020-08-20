@@ -15,6 +15,12 @@ and this project adheres to Year Notation Versioning.
 - `Security` in case of vulnerabilities.
 
 
+## [v0.0.9dev] - 2020-07-22
+
+- **Added** - Ability to delete buildings from Jamf.
+- **Fixed** - Items from input file and items from Jamf will now be compared using their lowercase varient for better consistency.
+
+
 ## [v0.0.8dev] - 2020-06-02
 
 - **Fixed** - Updated to account for other character encodings link `'\u017d'` = Ž. All API payloads are now encoded with `utf-8` encoding before being sent.
