@@ -32,19 +32,19 @@ A tool to update Jamf settings and device inventory in the Jamf console.
 
 __version__ = "0.0.9dev"
 
-
 import argparse
 import base64
 import csv
 import decimal
-import Foundation
 import getpass
-import objc
 import os
 import sys
 import time
 
+import Foundation
+import objc
 import requests
+from tqdm import tqdm
 
 try:
     import pathlib
@@ -60,6 +60,94 @@ HERE = pathlib.Path("__file__").parent
 
 # Name of this tool
 SCRIPT_NAME = sys.argv[0]
+
+
+def prog_args():
+    """Return arguments"""
+
+    parser = argparse.ArgumentParser(
+        prog=SCRIPT_NAME,
+        description="A tool to update device inventory records and other information in"
+        " Jamf Pro.",
+        allow_abbrev=False,
+    )
+
+    parser.version = __version__
+    parser.add_argument(
+        "--url",
+        type=str,
+        help="Jamf Pro tenant url (example.jamfcloud.com).",
+        required=True,
+    )
+
+    parser.add_argument(
+        "--update-device-records",
+        action="store_true",
+        help="Update a list of device records",
+    )
+
+    parser.add_argument(
+        "--get-buildings",
+        action="store_true",
+        help="Returns a list of buildings defined in Jamf. A report can be generated"
+        " by useing the --create-report flag. See this flags usage for more details.",
+        required=False,
+    )
+
+    parser.add_argument(
+        "--get-departments",
+        action="store_true",
+        help="Returns a list of departments defined in Jamf. A report can be generated"
+        " by useing the --create-report flag. See this flags usage for more details.",
+        required=False,
+    )
+
+    parser.add_argument(
+        "--add-buildings",
+        action="store_true",
+        help="Add one or more buildings to Jamf Pro console.",
+    )
+
+    parser.add_argument(
+        "--delete-buildings",
+        action="store_true",
+        help="Remove one or more buildings in Jamf Pro console.",
+    )
+
+    parser.add_argument(
+        "--add-departments",
+        action="store_true",
+        help="Add one or more departments to Jamf Pro console.",
+    )
+
+    parser.add_argument(
+        "--delete-departments",
+        action="store_true",
+        help="Remove one or more departments to Jamf Pro console.",
+    )
+
+    parser.add_argument(
+        "--input-file",
+        type=str,
+        metavar='"/path/to/input_file.csv"',
+        help="Enter path to the spreadsheet(csv file) or drag the file into this"
+        " Terminal window.",
+        required=False,
+    )
+
+    parser.add_argument(
+        "--create-report",
+        type=str,
+        metavar='"report_name.csv"',
+        help="Enter a path where the report can be created. If a path is not specified"
+        " the report will be generated in the current directory.",
+        required=False,
+    )
+
+    parser.add_argument("--version", action="version", help="Show this tools version.")
+    parser.add_argument("-v", "--verbose", action="store", metavar="LEVEL")
+
+    return parser.parse_args()
 
 
 def get_username():
@@ -225,12 +313,12 @@ def remove_duplicates(data, search_key):
 
     unique_values.sort()
 
-    print(f"Total unique {search_key}s: {len(unique_values)}")
+    print(f"Total unique {search_key}s in the input file: {len(unique_values)}")
 
     return unique_values
 
 
-def classic_return_jamf_building(url, headers):
+def classic_return_jamf_buildings(url, headers):
     """Return building information from Jamf console using the Classic API
 
     uri: /JSSResource/buildings
@@ -260,7 +348,7 @@ def classic_return_jamf_building(url, headers):
     return buildings
 
 
-def return_jamf_building_id(url, headers, data, name):
+def return_jamf_building_id(data, name):
     """Return specified building id from buildings returned in building data.
 
     args:
@@ -279,7 +367,6 @@ def return_jamf_building_id(url, headers, data, name):
             if name == building["name"]:
                 id = building["id"]
                 break
-
             building_list.append(building)
 
     except IndexError:
@@ -365,54 +452,81 @@ def jamf_delete_building(url, headers, id):
 
     status_code = None
 
-    try:
-        response = requests.delete(
-            url + f"/uapi/v1/buildings/{id}", headers=headers, timeout=30,
-        )
+    while status_code is not requests.codes["no_content"] and attempt < 6:
 
-        status_code = response.status_code
+        try:
+            response = requests.delete(
+                url + f"/uapi/v1/buildings/{id}", headers=headers, timeout=30,
+            )
+            status_code = response.status_code
+            if status_code is requests.codes["no_content"]:
+                break
+            else:
+                response.raise_for_status()
 
-        if status_code == 204:
-            print(f"Building deleted ...")
-        else:
-            error_data = response.json()
-            response.raise_for_status()
-
-    except requests.exceptions.RequestException as error:
-        print(f"Building not deleted ...")
-        print(f"HTTP Error Code: {error}")
-        print(f"Jamf Error: {error_data}")
-        status_code = error_data["httpStatus"]
+        except requests.exceptions.RequestException as error:
+            print(f"Building not deleted ...")
+            print(f"HTTP Error Code: {error}")
 
     return status_code
 
 
-def return_jamf_departments(url, headers):
-    """Return all departments in the Jamf console.
+def classic_return_jamf_departments(url, headers):
+    """Return department information from Jamf console using the Classic API
 
-    uri: /uapi/v1/departments
+    uri: /JSSResource/departments
+
+    Args:
+        url: MDM url
+        headers: classic headers
     """
-    endpoint = "/uapi/v1/departments"
-    results = ""
+
+    endpoint = f"/JSSResource/departments"
+    departments = None
     try:
         response = requests.get(url + endpoint, headers=headers, timeout=30)
         status_code = response.status_code
         if status_code is requests.codes["ok"]:
             # Response code 200
             data = response.json()
-            results = data["results"]
+            departments = data["departments"]
         else:
             response.raise_for_status()
 
     except requests.exceptions.RequestException as error:
-        print(f"Failed to return buildings ...")
+        print(f"Failed to return departments ...")
         print(f"This could be due to insufficient permissions for the API user.")
         sys.exit(f"Error: {error}")
 
-    return results
+    return departments
 
 
-def return_jamf_department_id(url, headers, name):
+# def return_jamf_departments(url, headers):
+#     """Return all departments in the Jamf console.
+#
+#     uri: /uapi/v1/departments
+#     """
+#     endpoint = "/uapi/v1/departments"
+#     results = ""
+#     try:
+#         response = requests.get(url + endpoint, headers=headers, timeout=30)
+#         status_code = response.status_code
+#         if status_code is requests.codes["ok"]:
+#             # Response code 200
+#             data = response.json()
+#             results = data["results"]
+#         else:
+#             response.raise_for_status()
+#
+#     except requests.exceptions.RequestException as error:
+#         print(f"Failed to return departments ...")
+#         print(f"This could be due to insufficient permissions for the API user.")
+#         sys.exit(f"Error: {error}")
+#
+#     return results
+
+
+def return_jamf_department_id(data, name):
     """Return specified department in the Jamf console.
 
     This function looks up a department based on specified name and returns the
@@ -423,30 +537,25 @@ def return_jamf_department_id(url, headers, name):
     args:
         url: Jamf console URL
         headers: Jamf access token headers
+        data: Jamf department data
         name: Depmartment name
     """
-    endpoint = f"/uapi/v1/departments?search=name=={name}"
+
+    dept_list = []
+    departments = data
     id = None
+
     try:
-        response = requests.get(url + endpoint, headers=headers, timeout=30)
-        status_code = response.status_code
-        if status_code is requests.codes["ok"]:
-            # Response code 200
-            data = response.json()
-            results = data["results"]
+        for dept in departments:
+            if name == dept["name"]:
+                id = dept["id"]
+                break
+            dept_list.append(dept)
 
-            for dept in results:
+    except IndexError:
+        print(f"Unable to find department id for {name}")
 
-                # Find the exact name to make sure we get an exact match.
-                if dept["name"] == name:
-                    id = dept["id"]
-        else:
-            response.raise_for_status()
-
-    except requests.exceptions.RequestException as error:
-        print(f"Failed to return department ...")
-        print(f"This could be due to insufficient permissions for the API user.")
-        sys.exit(f"Error: {error}")
+    # print(f"Number of records searched: {len(dept_list)}/{len(departments)}")
 
     return id
 
@@ -514,26 +623,27 @@ def jamf_delete_department(url, headers, id):
         id: Jamf department ID
     """
 
+    attempt = 0
     status_code = None
 
-    try:
-        response = requests.delete(
-            url + f"/uapi/v1/departments/{id}", headers=headers, timeout=30,
-        )
+    while status_code is not requests.codes["no_content"] and attempt < 6:
 
-        status_code = response.status_code
+        try:
+            response = requests.delete(
+                url + f"/uapi/v1/departments/{id}", headers=headers, timeout=30,
+            )
+            status_code = response.status_code
+            if status_code is requests.codes["no_content"]:
+                break
+            else:
+                response.raise_for_status()
 
-        if status_code == 204:
-            print(f"Department deleted ...")
-        else:
-            error_data = response.json()
-            response.raise_for_status()
-
-    except requests.exceptions.RequestException as error:
-        print(f"Department not added ...")
-        print(f"HTTP Error Code: {error}")
-        print(f"Jamf Error: {error_data}")
-        status_code = error_data["httpStatus"]
+        except requests.exceptions.RequestException as error:
+            print(f"Department not deleted ...")
+            print(f"HTTP Error Code: {error}")
+            attempt += 1
+            if attempt == 5:
+                print(f"Exiting ...")
 
     return status_code
 
@@ -668,106 +778,8 @@ def update_device_building_assignment(
 def main():
     "Run the main logic"
 
-    parser = argparse.ArgumentParser(
-        prog=SCRIPT_NAME,
-        description="A tool to update device inventory records and other information in"
-        " Jamf Pro.",
-        allow_abbrev=False,
-    )
-
-    parser.version = __version__
-    parser.add_argument(
-        "--url",
-        type=str,
-        help="Jamf Pro tenant url (example.jamfcloud.com).",
-        required=True,
-    )
-
-    # NEW THING
-    parser.add_argument(
-        "--update-device-records",
-        action="store_true",
-        help="Update a list of device records",
-    )
-
-    parser.add_argument(
-        "--get-buildings",
-        action="store_true",
-        help="Returns a list of buildings defined in Jamf. A report can be generated"
-        " by useing the --create-report flag. See this flags usage for more details.",
-        required=False,
-    )
-
-    # NEW THING
-    parser.add_argument(
-        "--add-buildings",
-        action="store_true",
-        help="Add one or more buildings to Jamf Pro console.",
-    )
-
-    parser.add_argument(
-        "--delete-buildings",
-        action="store_true",
-        help="Remove one or more buildings in Jamf Pro console.",
-    )
-
-    # NEW THING
-    # parser.add_argument(
-    #     "--update-buildings",
-    #     action="store_true",
-    #     help="Update one or more building names in Jamf Pro",
-    # )
-
-    # NEW THING
-    parser.add_argument(
-        "--add-departments",
-        action="store_true",
-        help="Add one or more departments to Jamf Pro console.",
-    )
-
-    # NEW THING
-    # parser.add_argument(
-    #     "--update-departments",
-    #     action="store_true",
-    #     help="Update one or more department names in Jamf Pro.",
-    # )
-
-    # NEW THING
-    parser.add_argument(
-        "--delete-departments",
-        action="store_true",
-        help="Remove one or more departments to Jamf Pro console.",
-    )
-
-    parser.add_argument(
-        "--input-file",
-        type=str,
-        metavar='"/path/to/input_file.csv"',
-        help="Enter path to the spreadsheet(csv file) or drag the file into this"
-        " Terminal window.",
-        required=False,
-    )
-
-    parser.add_argument(
-        "--create-report",
-        type=str,
-        metavar='"report_name.csv"',
-        help="Enter a path where the report can be created. If a path is not specified"
-        " the report will be generated in the current directory.",
-        required=False,
-    )
-
-    parser.add_argument(
-        "--create-input-file-template",
-        action="store_true",
-        help="Generate an input file template for use with this tool.",
-        required=False,
-    )
-
-    parser.add_argument("--version", action="version", help="Show this tools version.")
-    parser.add_argument("-v", "--verbose", action="store", metavar="LEVEL")
-
-    arguments = parser.parse_args()
+    # Return the arguments
+    arguments = prog_args()
 
     if arguments.url:
         print(f"Your Jamf Cloud URL is: https://{arguments.url}")
@@ -806,13 +818,15 @@ def main():
     # Buildings = Managers
     # There is a bug with the Jamf Pro API that will not return more than 1000 records.
     # jamf_building_data = return_jamf_building(url, access_headers, page_size=5000)
-    jamf_building_data = classic_return_jamf_building(url, basic_headers)
+    jamf_building_data = classic_return_jamf_buildings(url, basic_headers)
     jamf_building_names = get_jamf_building_attribute(jamf_building_data, "name")
 
     # Return current departments in Jamf conosole.
     # Buildings = Managers
-    jamf_departments = return_jamf_departments(url, access_headers)
-    jamf_department_names = get_jamf_deptmartment_attribute(jamf_departments, "name")
+    jamf_department_data = classic_return_jamf_departments(url, basic_headers)
+    jamf_department_names = get_jamf_deptmartment_attribute(
+        jamf_department_data, "name"
+    )
 
     if arguments.update_device_records:
         # List of manager entries that need to be updated in Jamf.
@@ -871,8 +885,6 @@ def main():
             for serial_number in incomplete_device_records:
                 print(f"{serial_number}")
 
-    ####################################################################################
-
     if arguments.get_buildings:
         # print(jamf_building_data)
 
@@ -921,7 +933,51 @@ def main():
             print(f"Report location: {pathlib.Path(report_name).resolve()}")
             print()
 
-    ####################################################################################
+    if arguments.get_departments:
+        department_names = []
+
+        print()
+        print("Department ID\tDepartment Name")
+        print("--------------------------------------------")
+        for department in jamf_department_data:
+            print(f"{department['id']}\t\t{department['name']}")
+            # Add department names to the list
+            department_names.append(department["name"])
+
+        print("")
+        print(f"Total Department Records: {len(jamf_department_data)}")
+        print("")
+
+        # Generate a report containing departments in Jamf.
+        if arguments.create_report:
+
+            report_name = arguments.create_report
+
+            # Test to see if the file exists at the defined path or if the file is in
+            # the current working directory.
+            if pathlib.Path(report_name).exists():
+                pass
+                print("Path exists ...")
+            else:
+                report_name = pathlib.Path(HERE).joinpath(report_name)
+
+            print(
+                f"Generating a csv report containing departments in {arguments.url} ..."
+            )
+            print(f"Report Name: {os.path.basename(report_name)}")
+
+            # generate the report
+            with open(report_name, mode="w", encoding="utf-8") as report:
+                out_fields = ["Department"]
+                writer = csv.DictWriter(report, fieldnames=out_fields)
+
+                writer.writeheader()
+                for name in sorted(department_names):
+                    writer.writerow({"Department": name})
+
+            print()
+            print(f"Report location: {pathlib.Path(report_name).resolve()}")
+            print()
 
     if arguments.add_buildings:
         # Added builds to jamf in this block of code.
@@ -1071,17 +1127,15 @@ def main():
                 check += 1
 
             # Get the building id for the provided name
-            building_id = return_jamf_building_id(
-                url, access_headers, jamf_building_data, name=name
-            )
+            building_id = return_jamf_building_id(jamf_building_data, name=name)
 
             if building_id is not None:
                 # If there are buildings that need to be removed
-                print(f"Removing {name}({building_id}) ...")
                 removal_status = jamf_delete_building(url, access_headers, building_id)
 
                 # Only append to total_removed if the status code is successful.
                 if removal_status == 204:
+                    print(f"Removing {name}({building_id}) ...")
                     total_removed.append(name)
 
             else:
@@ -1092,16 +1146,18 @@ def main():
     if arguments.delete_departments:
         # Remove departments in jamf in this block of code.
         print(f"You have set the --delete-departments option ...")
+        print(f"Starting to remove departments from the Jamf console...")
 
         # List of departments that need to be removed.
-        departments = remove_duplicates(csv_data, "Department")
+        unique_departments = remove_duplicates(csv_data, "Department")
 
         # Each time a department is removed add it to this list.
         total_removed = []
+        total_not_removed = []
 
         check = 0
 
-        for name in departments:
+        for name in tqdm(unique_departments):
 
             # Get a new access token if elapsed time is more than 1200 sec (20 minutes)
             if check_run_time(start_time) == 1200 and check < 1:
@@ -1124,20 +1180,24 @@ def main():
                 )
                 check += 1
 
-            dept_id = return_jamf_department_id(url, access_headers, name=name)
+            dept_id = return_jamf_department_id(jamf_department_data, name=name)
 
             if dept_id is not None:
                 # If there are departments that need to be removed
-                print(f"Removing {name} ...")
                 removal_status = jamf_delete_department(url, access_headers, dept_id)
 
                 # Only append to total_removed if the status code is successful.
                 if removal_status == 204:
+                    # print(
+                    #     f"Removing Department: {name} ({len(total_removed)}/{len(unique_departments)})..."
+                    # )
                     total_removed.append(name)
 
             else:
-                print(f"Department not in Jamf: {name}")
+                total_not_removed.append(name)
 
+        print("")
+        print(f"Total departments not in Jamf: {len(total_not_removed)}")
         print(f"Total departments removed from Jamf: {len(total_removed)}")
 
     # Get the time after script completes
