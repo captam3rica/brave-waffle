@@ -176,7 +176,7 @@ def get_access_token(url, headers):
         response.raise_for_status()
 
     except requests.exceptions.RequestException as error:
-        print(f"Failed to return token ...")
+        print("Failed to return token ...")
         sys.exit(f"Error: {error}")
 
     return access_token
@@ -203,7 +203,7 @@ def auth_token_keep_alive(url, headers):
         response.raise_for_status()
 
     except requests.exceptions.RequestException as error:
-        print(f"Failed to return token ...")
+        print("Failed to return token ...")
         sys.exit(f"Error: {error}")
 
     return access_token
@@ -280,7 +280,7 @@ def invalidate_access_token(url, headers):
         response.raise_for_status()
 
     except requests.exceptions.RequestException as error:
-        print(f"Failed to kill access token ...")
+        print("Failed to kill access token ...")
         sys.exit(f"Error: {error}")
 
 
@@ -302,7 +302,7 @@ def remove_duplicates(data, search_key):
         search_key: Key that we wanted to search for in the data.
     Return: list of unique values
     """
-    print(f"Checking the input file for duplicate entries ...")
+    print("Checking the input file for duplicate entries ...")
     unique_values = []
     for line in data:
         if search_key in line.keys() and line[search_key] != "":
@@ -328,7 +328,7 @@ def classic_return_jamf_buildings(url, headers):
         headers: bearer token headers
     """
 
-    endpoint = f"/JSSResource/buildings"
+    endpoint = "/JSSResource/buildings"
     buildings = None
     try:
         response = requests.get(url + endpoint, headers=headers, timeout=30)
@@ -341,8 +341,8 @@ def classic_return_jamf_buildings(url, headers):
             response.raise_for_status()
 
     except requests.exceptions.RequestException as error:
-        print(f"Failed to return buildings ...")
-        print(f"This could be due to insufficient permissions for the API user.")
+        print("Failed to return buildings ...")
+        print("This could be due to insufficient permissions for the API user.")
         sys.exit(f"Error: {error}")
 
     return buildings
@@ -358,14 +358,14 @@ def return_jamf_building_id(data, name):
         name: buildling name
     """
 
-    id = None
+    building_id = None
     building_list = []
     buildings = data
 
     try:
         for building in buildings:
             if name == building["name"]:
-                id = building["id"]
+                building_id = building["id"]
                 break
             building_list.append(building)
 
@@ -374,18 +374,18 @@ def return_jamf_building_id(data, name):
 
     print(f"Number of records searched: {len(building_list)}/{len(buildings)}")
 
-    return id
+    return building_id
 
 
 def get_jamf_building_attribute(data, search_key):
     """Parse input data returned from and return buildings defined in Jamf"""
-    list = []
+    attr_list = []
 
     for item in data:
         value = item[search_key]
-        list.append(value)
+        attr_list.append(value)
 
-    return list
+    return attr_list
 
 
 def jamf_add_building(url, headers, name):
