@@ -1,7 +1,7 @@
+![Code Style: Black](https://img.shields.io/badge/code%20style-black-black) [![SonarCloud](https://sonarcloud.io/images/project_badges/sonarcloud-white.svg)](https://sonarcloud.io/dashboard?id=captam3rica_brave-waffle)
+
 # Brave Waffle
 CLI Tool to manipulate information in the Jamf Pro console.
-
-![Code Style: Black](https://img.shields.io/badge/code%20style-black-black) [![SonarCloud](https://sonarcloud.io/images/project_badges/sonarcloud-white.svg)](https://sonarcloud.io/dashboard?id=captam3rica_brave-waffle)
 
 **NOTE**: THE CONTENTS OF THIS REPO ARE A WORK IN PROGRESS ...
 
